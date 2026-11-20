@@ -52,7 +52,13 @@ function form(fields: Record<string, string>): RequestInit {
 describe('the HTTP server', () => {
   it('answers health checks and serves the table script to other origins', async () => {
     const health = await fetch(`${base}/health`);
-    expect(await health.json()).toMatchObject({ status: 'ok', server: 'creatordb-workspace' });
+    expect(await health.json()).toMatchObject({ status: 'ok', server: 'roided-mcp' });
+    const svg = await fetch(`${base}/assets/icon.svg`);
+    expect(svg.headers.get('content-type')).toContain('image/svg+xml');
+    expect(await svg.text()).toContain('<svg');
+    const png = await fetch(`${base}/favicon.ico`);
+    expect(png.headers.get('content-type')).toContain('image/png');
+    expect(Buffer.from(await png.arrayBuffer()).subarray(1, 4).toString()).toBe('PNG');
     const script = await fetch(`${base}/assets/ext-apps.js`);
     expect(script.status).toBe(200);
     expect(script.headers.get('access-control-allow-origin')).toBe('*');

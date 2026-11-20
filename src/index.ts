@@ -24,7 +24,7 @@ async function main(): Promise<void> {
 
   const app = buildApp({ db, cfg, runner, upstream });
   const server = app.listen(cfg.port, () => {
-    console.log(`CreatorDB workspace MCP is listening. Connector URL: ${cfg.publicUrl}/mcp`);
+    console.log(`Roided MCP is listening. Connector URL: ${cfg.publicUrl}/mcp`);
     console.log(cfg.databaseUrl ? 'Database: Postgres' : `Database: embedded Postgres in ${cfg.dataDir}`);
   });
 

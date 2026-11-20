@@ -1,4 +1,8 @@
-# CreatorDB workspace MCP server
+# Roided MCP
+
+<img src="logo/roided-b-twotone.svg" alt="Roided MCP logo" width="120">
+
+The CreatorDB MCP, but better.
 
 An MCP server for the [CreatorDB V3 API](https://apiv3.creatordb.app) that works like the official one, without filling the model's context with data.
 
@@ -72,10 +76,10 @@ The server listens on `http://localhost:8787`. Setup is the same as for the offi
 In Claude Code:
 
 ```bash
-claude mcp add --transport http creatordb-workspace http://localhost:8787/mcp
+claude mcp add --transport http roided-mcp http://localhost:8787/mcp
 ```
 
-Then type `/mcp`, pick `creatordb-workspace` and sign in. Your browser opens the key page. Paste your key and press Connect.
+Then type `/mcp`, pick `roided-mcp` and sign in. Your browser opens the key page. Paste your key and press Connect.
 
 Claude on the web, on desktop and on mobile connects from Anthropic's servers, so it needs the server at a public HTTPS address. Add that address as a custom connector and the same key page opens.
 

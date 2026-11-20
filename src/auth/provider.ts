@@ -56,7 +56,8 @@ export function renderAuthorizePage(params: PageParams): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Connect CreatorDB</title>
+  <title>Connect Roided MCP</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg" />
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: #f7f7f8; color: #1a1a1a; display: flex; min-height: 100vh; margin: 0; align-items: center; justify-content: center; }
     .card { background: #fff; max-width: 440px; width: 100%; margin: 1rem; padding: 2rem; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -73,7 +74,8 @@ export function renderAuthorizePage(params: PageParams): string {
 </head>
 <body>
   <div class="card">
-    <h1>Connect CreatorDB</h1>
+    <img src="/assets/icon.svg" alt="" width="56" height="56" style="margin:-0.5rem 0 0.5rem -0.5rem" />
+    <h1>Connect Roided MCP</h1>
     <p>Paste your CreatorDB V3 API key to authorize this connection. The key is used to make your requests to CreatorDB, and your workspace of saved results belongs to it.</p>
     ${params.error ? `<p class="error">${escapeHtml(params.error)}</p>` : ''}
     <form method="POST" action="/authorize/submit">

@@ -7,7 +7,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { sha256 } from './auth/crypto.js';
 import { createProvider } from './auth/provider.js';
 import { workspaceKey } from './auth/workspaces.js';
-import { buildMcpServer, SERVER_NAME, SERVER_VERSION, type ServerDeps } from './server.js';
+import { buildMcpServer, SERVER_NAME, SERVER_TITLE, SERVER_VERSION, type ServerDeps } from './server.js';
+import { ICON_PNG, ICON_SVG } from './ui/icon.js';
 import { appendRows, existingKeys } from './workspace/datasets.js';
 import { verifyFileLink } from './workspace/files.js';
 
@@ -89,7 +90,7 @@ export function buildApp(deps: AppDeps): Express {
       baseUrl: new URL(cfg.publicUrl),
       resourceServerUrl: new URL(`${cfg.publicUrl}/mcp`),
       scopesSupported: [],
-      resourceName: 'CreatorDB workspace MCP',
+      resourceName: SERVER_TITLE,
     }),
   );
   app.post('/authorize/submit', (req, res) => {
@@ -108,12 +109,21 @@ export function buildApp(deps: AppDeps): Express {
       .status(200)
       .set('Content-Type', 'text/html; charset=utf-8')
       .send(
-        `<!DOCTYPE html><html><head><meta charset="utf-8"><title>CreatorDB workspace MCP</title></head>` +
+        `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${SERVER_TITLE}</title><link rel="icon" type="image/svg+xml" href="/assets/icon.svg"></head>` +
           `<body style="font-family:system-ui;max-width:640px;margin:4rem auto;padding:0 1rem;line-height:1.6">` +
-          `<h1>CreatorDB workspace MCP</h1>` +
+          `<img src="/assets/icon.svg" alt="" width="96" height="96"><h1>${SERVER_TITLE}</h1>` +
+          `<p>The CreatorDB MCP, with a server-side workspace.</p>` +
           `<p>Add this server to Claude as a custom connector with the URL <code>${cfg.publicUrl}/mcp</code>. ` +
           `On connect you paste your CreatorDB V3 API key.</p></body></html>`,
       );
+  });
+
+  // The logo. Clients read it from the server's icons, and browsers and favicon fetchers from /favicon.ico.
+  app.get('/assets/icon.svg', (_req, res) => {
+    res.set('Content-Type', 'image/svg+xml').set('Access-Control-Allow-Origin', '*').set('Cache-Control', 'public, max-age=86400').send(ICON_SVG);
+  });
+  app.get(['/assets/icon.png', '/favicon.ico'], (_req, res) => {
+    res.set('Content-Type', 'image/png').set('Access-Control-Allow-Origin', '*').set('Cache-Control', 'public, max-age=86400').send(ICON_PNG);
   });
 
   // The live table loads this script from inside Claude's sandboxed frame, which is another origin.
