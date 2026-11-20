@@ -2,7 +2,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { createServer } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { makeEnv, type TestEnv } from './helpers.js';
@@ -181,6 +183,83 @@ describe('files and uploads over HTTP', () => {
     expect(csv.join('\n')).toContain('@creator_0003');
     expect((await fetch(link.replace(/sig=.{6}/, 'sig=AAAAAA'))).status).toBe(403);
     expect((await fetch(link.replace(/expires=\d+/, 'expires=1'))).status).toBe(403);
+    await client.close();
+  });
+});
+
+/** What an MCP client such as Claude keeps between the steps of a sign-in. */
+class MemoryAuth implements OAuthClientProvider {
+  info?: OAuthClientInformationMixed;
+  saved?: OAuthTokens;
+  verifier = '';
+  /** Where the client would send the person's browser. */
+  authorizationUrl?: URL;
+  get redirectUrl(): string {
+    return 'http://localhost:9911/callback';
+  }
+  get clientMetadata(): OAuthClientMetadata {
+    return {
+      client_name: 'SDK test client',
+      redirect_uris: [this.redirectUrl],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+    };
+  }
+  clientInformation() {
+    return this.info;
+  }
+  saveClientInformation(info: OAuthClientInformationMixed) {
+    this.info = info;
+  }
+  tokens() {
+    return this.saved;
+  }
+  saveTokens(tokens: OAuthTokens) {
+    this.saved = tokens;
+  }
+  redirectToAuthorization(url: URL) {
+    this.authorizationUrl = url;
+  }
+  saveCodeVerifier(verifier: string) {
+    this.verifier = verifier;
+  }
+  codeVerifier() {
+    return this.verifier;
+  }
+}
+
+describe('sign-in the way Claude does it', () => {
+  it('goes from just the server address to the key page to a signed-in client', async () => {
+    // The client is given nothing but the address. It finds the sign-in endpoints and registers itself.
+    const auth = new MemoryAuth();
+    const first = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { authProvider: auth });
+    await expect(new Client({ name: 'sdk-oauth', version: '0' }).connect(first)).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(auth.authorizationUrl?.origin + auth.authorizationUrl!.pathname).toBe(`${base}/authorize`);
+    expect(auth.authorizationUrl!.searchParams.get('code_challenge_method')).toBe('S256');
+
+    // The person's browser opens the page, they paste their key and press Connect.
+    const page = await fetch(auth.authorizationUrl!);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('Paste your CreatorDB V3 API key');
+    const decode = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const fields = Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1]!, decode(m[2]!)]));
+    const submitted = await fetch(`${base}/authorize/submit`, form({ ...fields, api_key: 'key-from-the-page-1' }));
+    expect(submitted.status).toBe(302);
+    const back = new URL(submitted.headers.get('location')!);
+    expect(back.origin + back.pathname).toBe(auth.redirectUrl);
+    expect(back.searchParams.get('state')).toBe(auth.authorizationUrl!.searchParams.get('state'));
+
+    // Back in the client: it swaps the code for tokens and connects.
+    await first.finishAuth(back.searchParams.get('code')!);
+    expect(auth.saved?.access_token).toBeTruthy();
+    expect(JSON.stringify(auth.saved)).not.toContain('key-from-the-page-1');
+    const client = new Client({ name: 'sdk-oauth', version: '0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { authProvider: auth }));
+    expect((await client.listTools()).tools).toHaveLength(62);
+    const out = await client.callTool({ name: 'get_youtube_profile', arguments: { uniqueId: '@creator_0021' } });
+    expect((out.content as Array<{ text: string }>)[0]!.text).toContain('"totalSubscribers":21000');
     await client.close();
   });
 });

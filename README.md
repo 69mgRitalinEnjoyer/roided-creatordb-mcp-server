@@ -67,15 +67,21 @@ npm install
 npm run dev
 ```
 
-The server listens on `http://localhost:8787`. To use it from Claude Code with your own CreatorDB key:
+The server listens on `http://localhost:8787`. Setup is the same as for the official server: give Claude the address, and it sends you to a page where you paste your CreatorDB API key.
+
+In Claude Code:
 
 ```bash
-claude mcp add --transport http creatordb http://localhost:8787/mcp --header "X-Creatordb-Api-Key: YOUR_KEY"
+claude mcp add --transport http creatordb-workspace http://localhost:8787/mcp
 ```
 
-Remove the official CreatorDB connector first. Both servers offer tools with the same names, and the model may call either.
+Then type `/mcp`, pick `creatordb-workspace` and sign in. Your browser opens the key page. Paste your key and press Connect.
 
-Claude on the web, on desktop and on mobile connects from Anthropic's servers, so it needs the server at a public HTTPS address. There it signs in through the paste-your-key page, the same way the official server does.
+Claude on the web, on desktop and on mobile connects from Anthropic's servers, so it needs the server at a public HTTPS address. Add that address as a custom connector and the same key page opens.
+
+Turn off the official CreatorDB connector while you use this one. Both servers offer tools with the same names, and the model may call either.
+
+Scripts can skip the page and send the key in an `X-Creatordb-Api-Key` header, as on the official server.
 
 ## Configuration
 
