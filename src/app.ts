@@ -64,6 +64,20 @@ export function buildApp(deps: AppDeps): Express {
   // One proxy hop, as on Cloud Run, so rate limits see the caller's address.
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  // One line per request: method, path, status and time. Never the query string or the body,
+  // and never an upload token, so no key, sign-in code or link signature reaches the logs.
+  app.use((req, res, next) => {
+    if (req.path === '/health') return next();
+    const started = Date.now();
+    const path = req.path.replace(/^\/upload\/.+/, '/upload/[token]');
+    res.on('finish', () => {
+      // For MCP calls, the method name and protocol version help when a client and the server disagree.
+      const rpc = req.path === '/mcp' && req.body && typeof req.body.method === 'string' ? ` ${req.body.method}` : '';
+      const version = req.path === '/mcp' && req.header('mcp-protocol-version') ? ` v${req.header('mcp-protocol-version')}` : '';
+      console.log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms${rpc}${version}`);
+    });
+    next();
+  });
   app.use(express.json({ limit: '4mb' }));
   app.use(express.urlencoded({ extended: true }));
 
