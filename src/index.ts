@@ -1,30 +1,42 @@
-#!/usr/bin/env node
+import { buildApp } from './app.js';
+import { loadConfig } from './config.js';
+import { openDb } from './db/client.js';
+import { migrate } from './db/schema.js';
+import { Gateway, installGateway } from './gateway/gateway.js';
+import { loadOfficial } from './official/loader.js';
+import { PullRunner } from './pulls/pulls.js';
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { registerAllTools } from './register-tools.js';
+async function main(): Promise<void> {
+  const cfg = loadConfig();
+  const db = await openDb(cfg);
+  await migrate(db);
 
-const apiKey = process.env.CREATORDB_API_KEY;
-if (!apiKey) {
-  console.error('CREATORDB_API_KEY environment variable is required');
-  process.exit(1);
+  // From here on, the official tool code's requests are caught by the gateway.
+  let upstream: typeof fetch = fetch;
+  installGateway((realFetch) => {
+    upstream = realFetch;
+    return new Gateway({ db, cfg, upstream: realFetch });
+  });
+  await loadOfficial();
+
+  const runner = new PullRunner({ db, cfg });
+  runner.start();
+
+  const app = buildApp({ db, cfg, runner, upstream });
+  const server = app.listen(cfg.port, () => {
+    console.log(`CreatorDB workspace MCP is listening. Connector URL: ${cfg.publicUrl}/mcp`);
+    console.log(cfg.databaseUrl ? 'Database: Postgres' : `Database: embedded Postgres in ${cfg.dataDir}`);
+  });
+
+  const shutdown = () => {
+    runner.stop();
+    server.close(() => void db.close().finally(() => process.exit(0)));
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
-// Read version from the package's package.json so serverInfo.version stays in
-// sync with whatever npm shipped. From dist/index.js, package.json is one dir up.
-const here = dirname(fileURLToPath(import.meta.url));
-const { version } = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'));
-
-const server = new McpServer({
-  name: 'creatordb',
-  version,
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });
-
-registerAllTools(server, apiKey);
-
-// Connect via stdio transport
-const transport = new StdioServerTransport();
-await server.connect(transport);

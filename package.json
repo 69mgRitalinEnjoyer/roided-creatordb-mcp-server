@@ -1,65 +1,36 @@
 {
-  "name": "@creatordbai/mcp-server",
-  "version": "1.7.0",
-  "description": "MCP server for CreatorDB V3 API \u2014 search and analyze creators across YouTube, Instagram, and TikTok",
+  "name": "roided-creatordb-mcp-server",
+  "version": "0.1.0",
+  "description": "CreatorDB MCP server with a server-side workspace: the official tools, whole-list pulls and a live table, without filling the model's context",
+  "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "exports": {
-    ".": "./dist/index.js",
-    "./register-tools": "./dist/register-tools.js"
-  },
-  "bin": {
-    "creatordb-mcp-server": "dist/index.js"
-  },
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsc --watch",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run build",
-    "test": "npm run build && node --test dist/**/*.test.js"
-  },
-  "files": [
-    "dist",
-    "!dist/**/*.test.js",
-    "!dist/**/*.test.d.ts",
-    "!dist/**/*.test.js.map",
-    "README.md",
-    "LICENSE"
-  ],
-  "keywords": [
-    "mcp",
-    "model-context-protocol",
-    "creatordb",
-    "influencer",
-    "creator",
-    "youtube",
-    "instagram",
-    "tiktok",
-    "claude"
-  ],
   "license": "MIT",
-  "author": "CreatorDB",
-  "homepage": "https://github.com/CreatorDB/creatordb-mcp-server#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/CreatorDB/creatordb-mcp-server.git"
-  },
-  "bugs": {
-    "url": "https://github.com/CreatorDB/creatordb-mcp-server/issues"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "zod": "^3.24.4"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.3",
-    "@types/node": "^22.15.3"
-  },
   "engines": {
     "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "preview:table": "node scripts/preview-table.mjs"
+  },
+  "dependencies": {
+    "@creatordbai/mcp-server": "1.13.1",
+    "@electric-sql/pglite": "^0.5.17",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.3",
+    "vitest": "^5.1.1"
   }
 }
