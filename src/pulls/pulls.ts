@@ -5,7 +5,16 @@ import { json, type Db } from '../db/client.js';
 import { workspaceKey } from '../auth/workspaces.js';
 import { callOfficial, officialHandlers, type OfficialTool, type ToolResult } from '../official/loader.js';
 import { describeCall, mainReply } from '../official/replies.js';
-import { appendRows, createDataset, existingKeys, getDataset, mergeIntoRows, ToolError, type Dataset } from '../workspace/datasets.js';
+import {
+  appendRows,
+  createDataset,
+  existingKeys,
+  getDataset,
+  mergeIntoRows,
+  mergeIntoRowsByRowNo,
+  ToolError,
+  type Dataset,
+} from '../workspace/datasets.js';
 import { rowKey, type Row } from '../workspace/rows.js';
 
 export interface PullRequest {
@@ -13,11 +22,15 @@ export interface PullRequest {
   search?: { tool: string; args: Record<string, unknown>; max_results?: number };
   calls: Array<{ tool: string; args?: Record<string, unknown> }>;
   name?: string;
+  /** Set for a vet_creators run over a long list or a dataset. */
+  vet?: { platform?: Platform };
 }
 
 export interface Pull {
   id: number;
   workspace_id: string;
+  /** 'list' for pull_list, 'vet' for vet_creators. */
+  kind: string;
   request: PullRequest;
   status: 'running' | 'paused' | 'done' | 'partial' | 'cancelled';
   total: number;
@@ -29,7 +42,22 @@ export interface Pull {
   cancel_requested: boolean;
 }
 
-type ChunkWork = { type: 'search'; offset: number; pageSize: number; first: boolean } | { type: 'items'; keys: string[] };
+export type Platform = 'youtube' | 'instagram' | 'tiktok';
+const PLATFORMS: Platform[] = ['youtube', 'instagram', 'tiktok'];
+
+/** One creator in a vet run: the dataset row its results go to, and how to look it up. */
+interface VetItem {
+  row: number;
+  platform: Platform;
+  handle: string;
+  /** Why it can't be vetted, when that is known before the run starts. */
+  skip?: string;
+}
+
+type ChunkWork =
+  | { type: 'search'; offset: number; pageSize: number; first: boolean }
+  | { type: 'items'; keys: string[] }
+  | { type: 'vet'; items: VetItem[] };
 
 interface Chunk {
   id: number;
@@ -47,7 +75,9 @@ export interface PullDeps {
 
 const SEARCH_PAGE = 100;
 const LOCK_MINUTES = 10;
-const PULL_FIELDS = 'id, workspace_id, request, status, total, done, failed, credits, dataset_id, note, cancel_requested';
+const PULL_FIELDS = 'id, workspace_id, kind, request, status, total, done, failed, credits, dataset_id, note, cancel_requested';
+/** The official vet_creators takes at most 150 creators per call, and asks CreatorDB about 50 at a time. */
+const VET_CHUNK = 150;
 
 class OutOfCredits extends Error {}
 
@@ -138,10 +168,17 @@ export async function startPull(deps: PullDeps, runner: PullRunner, workspaceId:
   return pull;
 }
 
-async function insertPull(q: Db | Parameters<Parameters<Db['asWorkspace']>[1]>[0], workspaceId: string, request: PullRequest, datasetId: number, total: number): Promise<Pull> {
+async function insertPull(
+  q: Db | Parameters<Parameters<Db['asWorkspace']>[1]>[0],
+  workspaceId: string,
+  request: PullRequest,
+  datasetId: number,
+  total: number,
+  kind: 'list' | 'vet' = 'list',
+): Promise<Pull> {
   const res = await q.query<Pull>(
-    `insert into pulls (workspace_id, kind, request, dataset_id, total) values ($1, 'list', $2::jsonb, $3, $4) returning ${PULL_FIELDS}`,
-    [workspaceId, json(request), datasetId, total],
+    `insert into pulls (workspace_id, kind, request, dataset_id, total) values ($1, $5, $2::jsonb, $3, $4) returning ${PULL_FIELDS}`,
+    [workspaceId, json(request), datasetId, total, kind],
   );
   return res.rows[0]!;
 }
@@ -150,7 +187,10 @@ async function insertChunks(q: Parameters<Parameters<Db['asWorkspace']>[1]>[0], 
   if (work.length === 0) return;
   await q.query(
     `insert into pull_chunks (pull_id, workspace_id, work, size)
-     select $1, $2, x, case when x->>'type' = 'items' then jsonb_array_length(x->'keys') else (x->>'pageSize')::int end
+     select $1, $2, x, case x->>'type'
+                         when 'items' then jsonb_array_length(x->'keys')
+                         when 'vet' then jsonb_array_length(x->'items')
+                         else (x->>'pageSize')::int end
        from jsonb_array_elements($3::jsonb) x`,
     [pull.id, pull.workspace_id, json(work)],
   );
@@ -338,6 +378,46 @@ export class PullRunner {
     this.events.emit(`pull:${pullId}`);
   }
 
+  /**
+   * Vets one chunk of up to 150 creators with the official vet_creators, which asks CreatorDB
+   * about 50 at a time, and adds each creator's card to its row. A retried chunk reuses the
+   * replies it already paid for.
+   */
+  private async runVetChunk(pull: Pull, items: VetItem[], tools: Map<string, OfficialTool>, newContext: () => CallContext): Promise<number> {
+    const vet = tools.get('vet_creators');
+    if (!vet) throw new Error('The official package no longer has vet_creators.');
+    const patches: Array<{ row: number; data: Row }> = [];
+    const runnable: VetItem[] = [];
+    for (const item of items) {
+      const problem = item.skip ?? vetProblem(item);
+      if (problem) patches.push({ row: item.row, data: { vet_status: problem } });
+      else runnable.push(item);
+    }
+    if (runnable.length) {
+      const ctx = newContext();
+      const result = await callContext.run(ctx, () =>
+        callOfficial(vet, { creators: runnable.map(({ platform, handle }) => ({ platform, handle })) }),
+      );
+      if (ctx.outOfCredits) throw new OutOfCredits();
+      const failed = ctx.capture.find((c) => c.status >= 400 || (isEnvelope(c.envelope) && c.envelope.success === false));
+      if (failed) {
+        const code = isEnvelope(failed.envelope) && failed.envelope.errorCode ? `: ${String(failed.envelope.errorCode)}` : '';
+        throw new Error(`CreatorDB answered ${failed.status} on ${failed.path}${code}`);
+      }
+      const cards = readVetCards(result);
+      if (!cards) throw new Error(`The vet_creators reply could not be read: ${firstText(result)}`);
+      // Cards are matched on platform and handle, so one handle on two platforms stays apart.
+      const id = (platform: unknown, handle: unknown) => `${String(platform)}:${String(handle ?? '').replace(/^@/, '').toLowerCase()}`;
+      const byHandle = new Map(cards.map((card) => [id(card.platform, card.handle), card]));
+      for (const item of runnable) {
+        const card = byHandle.get(id(item.platform, item.handle));
+        patches.push({ row: item.row, data: card ? { ...card, vet_status: 'vetted' } : { vet_status: 'not found in CreatorDB' } });
+      }
+    }
+    await mergeIntoRowsByRowNo(this.deps.db, pull.workspace_id, pull.dataset_id, patches);
+    return items.length;
+  }
+
   /** Does one chunk's work and returns how many creators it handled. */
   private async runChunk(chunk: Chunk): Promise<number> {
     const { db, cfg } = this.deps;
@@ -348,6 +428,7 @@ export class PullRunner {
     const tools = await officialHandlers();
     const request = pull.request;
     const newContext = (): CallContext => ({ workspaceId, apiKey, priority: 'pull', pullId: pull.id, capture: [] });
+    if (chunk.work.type === 'vet') return this.runVetChunk(pull, chunk.work.items, tools, newContext);
 
     let keys: string[];
     if (chunk.work.type === 'search') {
@@ -408,6 +489,113 @@ export class PullRunner {
     await mergeIntoRows(db, workspaceId, pull.dataset_id, [...patches].map(([key, data]) => ({ key, data })));
     return keys.length;
   }
+}
+
+/**
+ * Puts a handle in the form CreatorDB's search matches: the last part of a profile link, in
+ * lowercase, with a leading @ on YouTube and none elsewhere.
+ */
+export function vetHandle(platform: Platform, raw: string): string {
+  let h = raw.trim();
+  if (h.includes('/')) {
+    const segments = h.split(/[?#]/)[0]!.split('/').filter(Boolean);
+    if (segments.length) h = segments[segments.length - 1]!;
+  }
+  h = h.replace(/^@+/, '').toLowerCase();
+  return platform === 'youtube' && h ? `@${h}` : h;
+}
+
+/**
+ * Why a creator can't be vetted, or null when it can. YouTube's search refuses a whole request
+ * when one handle in it has letters outside a-z, so those are held back and marked instead.
+ */
+function vetProblem(item: VetItem): string | null {
+  if (!item.handle) return 'skipped: no handle';
+  if (item.platform === 'youtube' && !/^@[a-z0-9._-]+$/.test(item.handle)) {
+    return 'skipped: YouTube search only takes handles in Latin letters, digits, ".", "_" and "-"';
+  }
+  return null;
+}
+
+/** The creator cards in an official vet_creators reply, or null when the reply isn't one. */
+export function readVetCards(result: ToolResult): Row[] | null {
+  const first = result.content.find((c) => c.type === 'text') as { text?: string } | undefined;
+  try {
+    const parsed = JSON.parse(first?.text ?? '') as { creators?: unknown };
+    return Array.isArray(parsed.creators) ? (parsed.creators as Row[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface VetRequest {
+  creators?: Array<{ platform: Platform; handle: string }>;
+  dataset?: string | number;
+  /** For dataset rows that don't say which platform they are on. */
+  platform?: Platform;
+  name?: string;
+}
+
+/**
+ * Starts vet_creators on a long list or a whole dataset. Nothing is estimated and nobody is
+ * asked. Every creator gets a row: a list becomes a new dataset, one row per creator in the order
+ * given, and a dataset gets the results added to its own rows.
+ */
+export async function startVet(deps: PullDeps, runner: PullRunner, workspaceId: string, input: VetRequest): Promise<Pull> {
+  const pull = await deps.db.asWorkspace(workspaceId, async (q) => {
+    let datasetId: number;
+    const items: VetItem[] = [];
+    if (input.creators?.length) {
+      const seen = new Set<string>();
+      const unique: Array<{ platform: Platform; handle: string }> = [];
+      for (const c of input.creators) {
+        const handle = vetHandle(c.platform, c.handle);
+        if (seen.has(`${c.platform}:${handle}`)) continue;
+        seen.add(`${c.platform}:${handle}`);
+        unique.push({ platform: c.platform, handle });
+      }
+      const dataset = await createDataset(q, workspaceId, {
+        name: input.name ?? `vet_creators: ${unique.length} creators`,
+        kind: 'vet',
+        source: { tool: 'vet_creators' },
+      });
+      await appendRows(q, workspaceId, dataset.id, unique.map((c) => ({ key: c.handle || null, data: { uniqueId: c.handle, platform: c.platform } })));
+      // A new dataset numbers its rows from 1, in the order given.
+      unique.forEach((c, i) => items.push({ row: i + 1, platform: c.platform, handle: c.handle }));
+      datasetId = dataset.id;
+    } else {
+      const dataset = await getDataset(q, workspaceId, input.dataset!);
+      const rows = await q.query<{ row_no: number; key: string | null; platform: string | null; unique_id: string | null }>(
+        `select row_no, key, data->>'platform' as platform, data->>'uniqueId' as unique_id
+           from dataset_rows where dataset_id = $1 and workspace_id = $2 order by row_no`,
+        [dataset.id, workspaceId],
+      );
+      if (rows.rows.length === 0) throw new ToolError(`Dataset ${dataset.id} has no rows to vet.`);
+      for (const r of rows.rows) {
+        const platform = PLATFORMS.find((p) => p === r.platform) ?? input.platform;
+        if (!platform) {
+          throw new ToolError(
+            `Some rows of dataset ${dataset.id} don't say which platform they are on. Pass platform: "youtube", "instagram" or "tiktok".`,
+          );
+        }
+        const raw = r.unique_id ?? r.key ?? '';
+        if (platform === 'youtube' && /^UC[\w-]{22}$/.test(raw)) {
+          items.push({ row: r.row_no, platform, handle: '', skip: 'skipped: YouTube needs the @handle, and this row only has a channel ID' });
+        } else {
+          items.push({ row: r.row_no, platform, handle: vetHandle(platform, raw) });
+        }
+      }
+      datasetId = dataset.id;
+    }
+    const request: PullRequest = { calls: [], vet: { platform: input.platform }, name: input.name };
+    const created = await insertPull(q, workspaceId, request, datasetId, items.length, 'vet');
+    const work: ChunkWork[] = [];
+    for (let i = 0; i < items.length; i += VET_CHUNK) work.push({ type: 'vet', items: items.slice(i, i + VET_CHUNK) });
+    await insertChunks(q, created, work);
+    return created;
+  });
+  runner.kick();
+  return pull;
 }
 
 export async function pullDataset(db: Db, pull: Pull): Promise<Dataset> {

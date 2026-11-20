@@ -184,7 +184,11 @@ function render() {
 
 function onResult(result) {
   const sc = result && result.structuredContent;
-  if (!sc) { state.error = textOf(result) || ""; render(); return; }
+  if (!sc) {
+    // A reply with no table, such as an error. Show its first line, and only when no table is open.
+    if (!state.table) { state.error = (textOf(result) || "This reply has no table.").split("\n")[0].slice(0, 300); render(); }
+    return;
+  }
   if (sc.pull) state.pull = sc.pull;
   if (sc.table) {
     const first = !state.table || state.table.dataset !== sc.table.dataset;

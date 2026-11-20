@@ -12,10 +12,11 @@ Status: version 0.1. It runs end to end against a fake CreatorDB in the test sui
 
 ## What it does
 
-- **The official tools, unchanged.** The 48 tools are loaded from the official package, [`@creatordbai/mcp-server`](https://www.npmjs.com/package/@creatordbai/mcp-server). Names, inputs, descriptions and labels are the official ones, so a skill written for the official server keeps working.
+- **The official tools, unchanged.** The 48 tools are loaded from the official package, [`@creatordbai/mcp-server`](https://www.npmjs.com/package/@creatordbai/mcp-server). Names, inputs, descriptions and labels are the official ones, so a skill written for the official server keeps working. The one change is that `vet_creators` has no 150-creator limit.
 - **No estimates and no approvals.** A request runs as soon as it is made, as on the official server. The reply reports the credits it used.
 - **The 50-row line.** A reply of up to 50 rows is sent exactly as the official server would send it. A longer one is saved as a dataset, and the model gets a summary with a 5-row sample and a CSV link. Niche lists, topic lists and usage reports always come back in full, because the model needs to read them.
 - **Whole lists in one request.** `pull_list` runs official one-creator calls over a whole list, or pulls every match of a search, and saves the result as a dataset. It starts at once. If it finishes within about two minutes the reply is the summary. Otherwise it keeps running on the server and `pull_status` reports on it.
+- **`vet_creators` with no limit.** The official tool checks up to 150 creators per call. Here it takes any number of creators, or every creator in a saved dataset, and asks CreatorDB about 50 at a time. Up to 50 come back in the reply exactly as the official tool sends them. A longer list comes back as a summary, a live table and a file.
 - **Work on the server.** `query_dataset` filters, sorts and counts a dataset and returns only the answer. `add_column` fills a new column from a formula. Neither calls CreatorDB.
 - **A live table in the chat.** `show_table`, and every finished pull, opens an interactive table built on [MCP Apps](https://github.com/modelcontextprotocol/ext-apps). The table loads its rows straight from the server, 100 at a time, so they never pass through the model.
 - **Judging without a model on the server.** `next_batch` hands out creators to judge against a rubric and `submit_verdicts` saves the verdicts. The customer's own Claude does the reading.
@@ -25,6 +26,7 @@ Status: version 0.1. It runs end to end against a fake CreatorDB in the test sui
 | Tools | What they do |
 |---|---|
 | The official 48 | Search, creator lookups, content search, sponsors, niche and topic lists, submissions and usage. See the [official README](https://github.com/CreatorDB/creatordb-mcp-server). |
+| `vet_creators` | One of the official 48, changed: checks size, engagement, audience and sponsors for any number of creators, or for every creator in a saved dataset |
 | `import_list` | Saves a list of handles as a dataset, from the call or from an uploaded CSV |
 | `pull_list`, `pull_status`, `cancel_pull` | Run official calls over a whole list, check on it, stop it |
 | `list_datasets`, `describe_dataset`, `query_dataset` | See what is saved, list its columns, filter, sort and count |
@@ -120,7 +122,7 @@ The tables and security rules are created on first start.
 ## What is not built yet
 
 - **One instance only.** Pulls run inside the server process and result files sit on its disk. With more than one instance, or with an instance that is stopped when idle, pulls stall and file links break. A task queue for pulls and cloud storage for files are the next step.
-- **One CreatorDB request per creator per call.** `pull_list` makes the same requests the official tools make. Batching 100 creators into one enriched search request would be much faster and is not built.
+- **`pull_list` makes one CreatorDB request per creator per call**, the same requests the official tools make. For a quick read on a long list, `vet_creators` is much faster: it asks about 50 creators per request.
 - **Key encryption uses the server's own secret.** A cloud key service can replace the two functions in `src/auth/workspaces.ts`.
 - **Not yet verified against live systems.** The test suite uses a fake CreatorDB, and the live table was checked in a browser with a stand-in host (`npm run preview:table`). Sign-in from Claude, the table inside Claude, and CreatorDB's real rate limits all still need a first run.
 - **No retention rules.** `delete_dataset` removes a dataset and its rows. The raw CreatorDB replies behind it stay as the credit record, with no expiry.
@@ -133,7 +135,7 @@ npm test
 npm run typecheck
 ```
 
-The tests start the whole server in memory with an embedded Postgres and a fake CreatorDB, so they spend no credits. They cover the official tools' replies, the 50-row line, whole-list pulls, pausing when credits run out, formulas, judging, sign-in, file links and the separation between workspaces.
+The tests start the whole server in memory with an embedded Postgres and a fake CreatorDB, so they spend no credits. They cover the official tools' replies, the 50-row line, whole-list pulls, `vet_creators` on long lists and datasets, pausing when credits run out, formulas, judging, sign-in, file links and the separation between workspaces.
 
 ## License and credits
 

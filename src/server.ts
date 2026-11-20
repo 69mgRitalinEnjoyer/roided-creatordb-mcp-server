@@ -5,6 +5,7 @@ import { officialInstructions, registerOfficialTools } from './official/loader.j
 import { makeAround } from './official/replies.js';
 import type { PullRunner } from './pulls/pulls.js';
 import { registerWorkspaceTools, WORKSPACE_INSTRUCTIONS } from './tools/register.js';
+import { registerVetTool } from './tools/vet.js';
 
 export const SERVER_NAME = 'roided-mcp';
 export const SERVER_TITLE = 'Roided MCP';
@@ -36,7 +37,11 @@ export async function buildMcpServer(deps: ServerDeps, auth: { workspaceId: stri
     },
     { instructions },
   );
-  await registerOfficialTools(server, makeAround(deps, auth));
+  // vet_creators is the one official tool this server replaces: same inputs and the same reply for
+  // up to 50 creators, but no limit on the list. See src/tools/vet.ts.
+  const official = await registerOfficialTools(server, makeAround(deps, auth), { replace: ['vet_creators'] });
   registerWorkspaceTools(server, deps, auth.workspaceId);
+  const vet = official.get('vet_creators');
+  if (vet) registerVetTool(server, deps, auth, vet);
   return server;
 }

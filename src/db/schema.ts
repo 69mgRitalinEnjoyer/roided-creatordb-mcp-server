@@ -159,8 +159,9 @@ create table if not exists uploads (
 );
 
 -- A number from text, or null when the text is not a number. Formulas never fail on bad data.
+-- A trailing % is dropped, so "4.5%" compares as 4.5.
 create or replace function safe_num(x text) returns numeric language sql immutable as $fn$
-  select case when x ~ '^\\s*-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?\\s*$' then trim(x)::numeric end
+  select case when x ~ '^\\s*-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?\\s*%?\\s*$' then rtrim(btrim(x), '% ')::numeric end
 $fn$;
 
 -- One line per CreatorDB call, with the charge CreatorDB reported.

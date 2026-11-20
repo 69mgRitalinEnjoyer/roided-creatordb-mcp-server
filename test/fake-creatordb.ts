@@ -77,13 +77,35 @@ export class FakeCreatorDb {
   private profile(platform: Platform, i: number): Record<string, unknown> {
     const followers = platform === 'youtube' ? { totalSubscribers: i * 1000 } : { totalFollowers: i * 1000 };
     return {
-      uniqueId: handleOf(i),
+      // CreatorDB's YouTube handles carry a leading @.
+      uniqueId: platform === 'youtube' ? `@${handleOf(i)}` : handleOf(i),
       ...(platform === 'youtube' ? { channelId: channelIdOf(i) } : {}),
       displayName: `Creator ${i}`,
       ...followers,
       country: i % 2 ? 'USA' : 'GBR',
       mainLanguage: 'eng',
       bio: i % 3 === 0 ? `Skincare routines and SPF reviews, account ${i}` : `Daily vlogs, account ${i}`,
+    };
+  }
+
+  /** The extra blocks a search returns when it asks for performance, audience, content and sponsors. */
+  private enrichment(platform: Platform, i: number): Record<string, unknown> {
+    return {
+      performance: {
+        contentsPerformanceRecent: {
+          views: { median: i * 300 },
+          likes: { median: i * 20 },
+          engagement: { avgEngagementRate: (i % 10) / 100, engagementConsistency: { consistencyLevel: i % 2 ? 'high' : 'moderate' } },
+        },
+        contentCountByDays: { '30d': i % 12 },
+      },
+      audience: {
+        audienceLocations: [{ country: 'USA', share: 0.4 }, { country: 'GBR', share: 0.2 }],
+        audienceGender: { femaleRatio: 0.55 },
+        audienceAvgAge: 27,
+      },
+      'content-detail': { recentReels: [{ description: `Recent post ${i}` }] },
+      ...(platform === 'tiktok' ? {} : { sponsorship: { sponsorList: [{ brandName: `Brand ${i % 7}`, sponsoredPosts: [1, 2] }] } }),
     };
   }
 
@@ -99,6 +121,10 @@ export class FakeCreatorDb {
     let indexes = Array.from({ length: this.size }, (_, k) => k + 1);
     for (const f of filters) {
       if (f.filterName === 'uniqueId' && f.op === 'in') {
+        // Like the real API, YouTube refuses the whole request when one handle has letters outside a-z.
+        if (platform === 'youtube' && (f.value as string[]).some((v) => !/^@?[A-Za-z0-9._-]+$/.test(v))) {
+          return this.fail(400, 'VALIDATION_ERROR', 'uniqueId must use Latin letters, digits, ".", "_" or "-"');
+        }
         const wanted = new Set((f.value as string[]).map((v) => v.replace(/^@/, '')));
         indexes = indexes.filter((i) => wanted.has(handleOf(i)));
       } else if (/^total(Followers|Subscribers)$/.test(f.filterName)) {
@@ -113,10 +139,14 @@ export class FakeCreatorDb {
     const creatorList = page.map((i) => {
       const p = this.profile(platform, i);
       const { bio, country, mainLanguage, ...top } = p;
-      return body.fields ? { ...top, profile: { bio, country, mainLanguage } } : top;
+      return body.fields ? { ...top, profile: { bio, country, mainLanguage }, ...this.enrichment(platform, i) } : top;
     });
     const hasNextPage = offset + pageSize < indexes.length;
-    return this.envelope({ creatorList, totalResults: indexes.length, hasNextPage, nextOffset: hasNextPage ? offset + pageSize : null }, 1);
+    // A plain search costs 1 credit. With enrichment fields every creator found is billed, as in vet_creators.
+    const credits = body.fields ? page.length * (platform === 'youtube' ? 17 : 13) : 1;
+    if (credits > this.creditsAvailable) return this.fail(402, 'INSUFFICIENT_CREDITS', 'Out of credits');
+    if (body.fields) for (const i of page) this.paid.set(`/${platform}/search:${i}`, (this.paid.get(`/${platform}/search:${i}`) ?? 0) + 1);
+    return this.envelope({ creatorList, totalResults: indexes.length, hasNextPage, nextOffset: hasNextPage ? offset + pageSize : null }, credits);
   }
 
   private charge(key: string, credits: number, data: Record<string, unknown>): Response {

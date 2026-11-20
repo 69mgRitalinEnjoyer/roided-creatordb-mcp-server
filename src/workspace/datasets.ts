@@ -117,6 +117,23 @@ export async function mergeIntoRows(
   await q.query('update datasets set updated_at = now() where id = $1 and workspace_id = $2', [datasetId, workspaceId]);
 }
 
+/** Adds fields to rows picked by row number. Fields with the same names are replaced. */
+export async function mergeIntoRowsByRowNo(
+  q: Queryable,
+  workspaceId: string,
+  datasetId: number,
+  patches: Array<{ row: number; data: Row }>,
+): Promise<void> {
+  if (patches.length === 0) return;
+  await q.query(
+    `update dataset_rows r set data = r.data || (x->'d')
+       from jsonb_array_elements($3::jsonb) x
+      where r.dataset_id = $1 and r.workspace_id = $2 and r.row_no = (x->>'n')::int`,
+    [datasetId, workspaceId, json(patches.map((p) => ({ n: p.row, d: p.data })))],
+  );
+  await q.query('update datasets set updated_at = now() where id = $1 and workspace_id = $2', [datasetId, workspaceId]);
+}
+
 export async function existingKeys(q: Queryable, workspaceId: string, datasetId: number, keys: string[]): Promise<Set<string>> {
   if (keys.length === 0) return new Set();
   const res = await q.query<{ key: string }>(

@@ -234,9 +234,11 @@ class Parser {
 const ALIASES: Record<string, (p: Params) => Compiled> = {
   row: () => ({ sql: 'r.row_no', type: 'num' }),
   key: () => ({ sql: 'r.key', type: 'text' }),
-  handle: (p) => ({ sql: `coalesce(r.data #>> ${p.add(['uniqueId'])}::text[], r.key)`, type: 'text' }),
+  handle: (p) => ({ sql: `coalesce(r.data #>> ${p.add(['uniqueId'])}::text[], r.data #>> ${p.add(['handle'])}::text[], r.key)`, type: 'text' }),
   followers: (p) => ({
-    sql: `safe_num(coalesce(r.data #>> ${p.add(['totalFollowers'])}::text[], r.data #>> ${p.add(['totalSubscribers'])}::text[]))`,
+    sql:
+      `safe_num(coalesce(r.data #>> ${p.add(['totalFollowers'])}::text[], r.data #>> ${p.add(['totalSubscribers'])}::text[], ` +
+      `r.data #>> ${p.add(['followers'])}::text[]))`,
     type: 'num',
   }),
 };

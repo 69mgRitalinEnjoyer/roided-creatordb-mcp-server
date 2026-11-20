@@ -38,7 +38,11 @@ function orderBy(sort: SortSpec[] | undefined, p: Params): string {
 /** The columns shown when none are named: the row's key, then the fullest simple columns. */
 export async function defaultColumns(q: Queryable, workspaceId: string, datasetId: number, max = 8): Promise<string[]> {
   const { columns } = await describeColumns(q, workspaceId, datasetId);
-  const preferred = ['uniqueId', 'channelId', 'displayName', 'totalFollowers', 'totalSubscribers', 'country', 'mainLanguage'];
+  // Who, how big, how they are doing lately, then where. Names a dataset doesn't have are skipped.
+  const preferred = [
+    'uniqueId', 'channelId', 'displayName', 'name', 'totalFollowers', 'totalSubscribers', 'followers',
+    'medianViews', 'engagementRate', 'country', 'mainLanguage', 'language', 'platform', 'vet_status',
+  ];
   const names = columns.map((c) => c.name);
   const picked = preferred.filter((n) => names.includes(n));
   const added = columns.filter((c) => c.origin !== 'CreatorDB').map((c) => c.name);

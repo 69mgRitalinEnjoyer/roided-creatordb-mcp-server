@@ -13,6 +13,8 @@ export interface OfficialTool {
   description: string;
   /** The tool's inputs as the official code declared them: a map of zod types. */
   shape: Record<string, z.ZodType>;
+  /** The official labels, such as readOnlyHint. */
+  annotations?: Record<string, unknown>;
   handler: Handler;
 }
 
@@ -43,7 +45,11 @@ export function loadOfficial(): Promise<OfficialModule> {
  * labels. Each handler is wrapped so `around` sees the call. The key passed to the official code
  * is a placeholder, because the gateway supplies the real one.
  */
-export async function registerOfficialTools(server: McpServer, around: Around): Promise<Map<string, OfficialTool>> {
+export async function registerOfficialTools(
+  server: McpServer,
+  around: Around,
+  options: { replace?: string[] } = {},
+): Promise<Map<string, OfficialTool>> {
   const official = await loadOfficial();
   const tools = new Map<string, OfficialTool>();
   const target = server as unknown as { tool: (...args: unknown[]) => unknown };
@@ -52,9 +58,18 @@ export async function registerOfficialTools(server: McpServer, around: Around): 
   // The official code calls server.tool(name, description, inputs, labels, handler).
   target.tool = (name: unknown, ...rest: unknown[]) => {
     const handler = rest[rest.length - 1] as Handler;
-    const shape = (rest.find((x, i) => i > 0 && typeof x === 'object' && x !== null && i < rest.length - 1) ?? {}) as Record<string, z.ZodType>;
-    const tool: OfficialTool = { name: String(name), description: String(rest[0] ?? ''), shape: isShape(shape) ? shape : {}, handler };
+    const shape = (rest.length >= 3 ? rest[1] : {}) as Record<string, z.ZodType>;
+    const labels = rest.length >= 4 ? rest[2] : undefined;
+    const tool: OfficialTool = {
+      name: String(name),
+      description: String(rest[0] ?? ''),
+      shape: isShape(shape) ? shape : {},
+      annotations: typeof labels === 'object' && labels !== null ? (labels as Record<string, unknown>) : undefined,
+      handler,
+    };
     tools.set(tool.name, tool);
+    // A tool this server replaces with its own version stays in the map but is not registered.
+    if (options.replace?.includes(tool.name)) return undefined;
     const wrapped: Handler = (args, extra) => around(tool, args, () => handler(args, extra));
     return realTool(name, ...rest.slice(0, -1), wrapped);
   };
