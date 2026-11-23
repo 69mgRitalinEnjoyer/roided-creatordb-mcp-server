@@ -13,10 +13,11 @@ export interface ReplyDeps {
 }
 
 /**
- * Niche and topic lists return IDs the model has to read to build its next search, and usage
- * is a short account report. These always go back in full, however long they are.
+ * Replies the model has to read in full, however many rows they have: niche and topic lists give
+ * the IDs for its next search, usage is a short account report, and a subtitle download is a
+ * transcript, one row per line.
  */
-const ALWAYS_IN_FULL = /^(list_[a-z]+_(niches|topics)|get_api_usage)$/;
+const ALWAYS_IN_FULL = /^(list_[a-z]+_(niches|topics)|get_api_usage|get_youtube_subtitles_download)$/;
 
 /** The reply that carries the tool's data: the last one CreatorDB answered successfully. */
 export function mainReply(capture: CapturedReply[]): { reply: CapturedReply; extracted: Extracted } | null {

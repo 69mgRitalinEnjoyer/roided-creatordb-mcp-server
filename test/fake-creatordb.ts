@@ -53,6 +53,10 @@ export class FakeCreatorDb {
     const [, platform, endpoint] = url.pathname.split('/') as [string, Platform, string];
     if (!['youtube', 'instagram', 'tiktok'].includes(platform)) return this.fail(404, 'NOT_FOUND', 'Unknown endpoint');
     if (endpoint === 'search') return this.search(platform, body ?? {});
+    if (url.pathname === '/youtube/subtitles/download') {
+      // Like the real API, a transcript is a bare list of lines, with no envelope.
+      return Response.json(Array.from({ length: 200 }, (_, k) => ({ text: `line ${k + 1}`, start: k * 3, dur: 3 })));
+    }
 
     const index = this.indexOf(platform, body ?? Object.fromEntries(url.searchParams));
     if (index === null) return this.fail(404, 'NOT_FOUND', 'Creator not found');

@@ -54,14 +54,14 @@ describe('vet_creators', () => {
     expect(out.structured).toMatchObject({ table: { rows: 3 } });
   });
 
-  it('checks 400 creators in one request, about 50 per CreatorDB request, with no approval step', async () => {
+  it('checks 400 creators in one request, 100 per CreatorDB request, with no approval step', async () => {
     const searches = env.fake.count('/instagram/search');
     const out = await a.call('vet_creators', { creators: [...on('instagram', 1, 380), ...on('instagram', 5000, 5019)], name: 'Big vet' });
     expect(out.isError).toBe(false);
     expect(out.text).toMatch(/pull\s+\d+, finished: 400 of 400 creators/);
     expect(out.text).toMatch(/results\s+380 vetted, 20 not found in CreatorDB/);
     expect(out.text).toContain('4,940 credits');
-    expect(env.fake.count('/instagram/search') - searches).toBe(8);
+    expect(env.fake.count('/instagram/search') - searches).toBe(4);
     expect(out.structured).toMatchObject({ pull: { status: 'done', total: 400 }, table: { rows: 400 } });
 
     const dataset = datasetIdIn(out.text);
@@ -123,7 +123,7 @@ describe('vet_creators', () => {
 
   it('pauses when credits run out, then carries on without paying twice', async () => {
     env.fake.paid.clear();
-    env.fake.creditsAvailable = 13 * 100; // enough for 2 of the 4 requests
+    env.fake.creditsAvailable = 13 * 100; // enough for 1 of the 2 requests
     const out = await a.call('vet_creators', { creators: on('instagram', 601, 800) });
     expect(out.text).toContain('is paused');
     const pull = Number(/pull (\d+)/.exec(out.text)![1]);
@@ -135,6 +135,22 @@ describe('vet_creators', () => {
     const charges = [...env.fake.paid.entries()].filter(([key]) => key.startsWith('/instagram/search:'));
     expect(charges).toHaveLength(200);
     expect(Math.max(...charges.map(([, n]) => n))).toBe(1);
+  });
+
+  it('builds exactly the cards the official tool builds', async () => {
+    const creators = [...on('instagram', 11, 20), ...on('youtube', 11, 20, '@'), ...on('tiktok', 11, 20)];
+    // Up to 50 creators: the official tool's own code.
+    const short = await a.call('vet_creators', { creators });
+    const cards = (JSON.parse(short.parts[0]!) as { creators: Array<Record<string, unknown>> }).creators;
+    expect(cards).toHaveLength(30);
+    // The same creators in a longer list: this server's 100-per-request path.
+    const long = await settle((await a.call('vet_creators', { creators: [...creators, ...on('instagram', 61, 90)] })).text);
+    const rows = await env.db.query<{ data: Record<string, unknown> }>('select data from dataset_rows where dataset_id = $1', [datasetIdIn(long)]);
+    for (const card of cards) {
+      const row = rows.rows.find((r) => r.data.platform === card.platform && r.data.handle === card.handle);
+      expect(row, `${String(card.platform)} ${String(card.handle)}`).toBeDefined();
+      expect(Object.fromEntries(Object.keys(card).map((k) => [k, row!.data[k]]))).toEqual(card);
+    }
   });
 
   it('explains a request it cannot run', async () => {

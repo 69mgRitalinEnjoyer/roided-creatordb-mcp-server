@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events';
 import type { Config } from '../config.js';
-import { callContext, isEnvelope, type CallContext } from '../context.js';
+import { callContext, isEnvelope, type ApiEnvelope, type CallContext } from '../context.js';
 import { json, type Db } from '../db/client.js';
 import { workspaceKey } from '../auth/workspaces.js';
-import { callOfficial, officialHandlers, type OfficialTool, type ToolResult } from '../official/loader.js';
+import { GATEWAY_ORIGIN } from '../gateway/gateway.js';
+import { callOfficial, officialHandlers, officialVetCard, type OfficialTool, type ToolResult } from '../official/loader.js';
 import { describeCall, mainReply } from '../official/replies.js';
 import {
   appendRows,
@@ -76,8 +77,13 @@ export interface PullDeps {
 const SEARCH_PAGE = 100;
 const LOCK_MINUTES = 10;
 const PULL_FIELDS = 'id, workspace_id, kind, request, status, total, done, failed, credits, dataset_id, note, cancel_requested';
-/** The official vet_creators takes at most 150 creators per call, and asks CreatorDB about 50 at a time. */
-const VET_CHUNK = 150;
+/**
+ * Creators per CreatorDB request in a vet run: the most one search request takes. The official
+ * vet_creators sends 50, so a long list needs half as many requests here.
+ */
+const VET_BATCH = 100;
+/** Creators per step of a vet run. A step's requests run at the same time, as in the official tool. */
+const VET_CHUNK = 300;
 
 class OutOfCredits extends Error {}
 
@@ -379,13 +385,13 @@ export class PullRunner {
   }
 
   /**
-   * Vets one chunk of up to 150 creators with the official vet_creators, which asks CreatorDB
-   * about 50 at a time, and adds each creator's card to its row. A retried chunk reuses the
-   * replies it already paid for.
+   * Vets one step of up to 300 creators: one CreatorDB request per platform per 100 creators, all
+   * at the same time, asking for what the official vet_creators asks for. Each creator's card,
+   * built by the official code, is added to its row. A retried step reuses the replies it
+   * already paid for.
    */
-  private async runVetChunk(pull: Pull, items: VetItem[], tools: Map<string, OfficialTool>, newContext: () => CallContext): Promise<number> {
-    const vet = tools.get('vet_creators');
-    if (!vet) throw new Error('The official package no longer has vet_creators.');
+  private async runVetChunk(pull: Pull, items: VetItem[], newContext: () => CallContext): Promise<number> {
+    const vetCard = await officialVetCard();
     const patches: Array<{ row: number; data: Row }> = [];
     const runnable: VetItem[] = [];
     for (const item of items) {
@@ -394,21 +400,27 @@ export class PullRunner {
       else runnable.push(item);
     }
     if (runnable.length) {
-      const ctx = newContext();
-      const result = await callContext.run(ctx, () =>
-        callOfficial(vet, { creators: runnable.map(({ platform, handle }) => ({ platform, handle })) }),
-      );
-      if (ctx.outOfCredits) throw new OutOfCredits();
-      const failed = ctx.capture.find((c) => c.status >= 400 || (isEnvelope(c.envelope) && c.envelope.success === false));
-      if (failed) {
-        const code = isEnvelope(failed.envelope) && failed.envelope.errorCode ? `: ${String(failed.envelope.errorCode)}` : '';
-        throw new Error(`CreatorDB answered ${failed.status} on ${failed.path}${code}`);
+      const batches: Array<{ platform: Platform; handles: string[] }> = [];
+      for (const platform of PLATFORMS) {
+        const handles = [...new Set(runnable.filter((i) => i.platform === platform).map((i) => i.handle))];
+        for (let i = 0; i < handles.length; i += VET_BATCH) batches.push({ platform, handles: handles.slice(i, i + VET_BATCH) });
       }
-      const cards = readVetCards(result);
-      if (!cards) throw new Error(`The vet_creators reply could not be read: ${firstText(result)}`);
+      const ctx = newContext();
+      // Every request finishes, so the ones that worked are saved and a retry doesn't pay for them again.
+      const results = await callContext.run(ctx, () => Promise.allSettled(batches.map((b) => vetBatch(b.platform, b.handles))));
+      if (ctx.outOfCredits) throw new OutOfCredits();
+      const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
       // Cards are matched on platform and handle, so one handle on two platforms stays apart.
       const id = (platform: unknown, handle: unknown) => `${String(platform)}:${String(handle ?? '').replace(/^@/, '').toLowerCase()}`;
-      const byHandle = new Map(cards.map((card) => [id(card.platform, card.handle), card]));
+      const byHandle = new Map<string, Row>();
+      results.forEach((r, k) => {
+        if (r.status !== 'fulfilled') return;
+        for (const creator of r.value) {
+          const card = vetCard(batches[k]!.platform, creator) as Row;
+          byHandle.set(id(card.platform, card.handle), card);
+        }
+      });
       for (const item of runnable) {
         const card = byHandle.get(id(item.platform, item.handle));
         patches.push({ row: item.row, data: card ? { ...card, vet_status: 'vetted' } : { vet_status: 'not found in CreatorDB' } });
@@ -428,7 +440,7 @@ export class PullRunner {
     const tools = await officialHandlers();
     const request = pull.request;
     const newContext = (): CallContext => ({ workspaceId, apiKey, priority: 'pull', pullId: pull.id, capture: [] });
-    if (chunk.work.type === 'vet') return this.runVetChunk(pull, chunk.work.items, tools, newContext);
+    if (chunk.work.type === 'vet') return this.runVetChunk(pull, chunk.work.items, newContext);
 
     let keys: string[];
     if (chunk.work.type === 'search') {
@@ -515,6 +527,41 @@ function vetProblem(item: VetItem): string | null {
     return 'skipped: YouTube search only takes handles in Latin letters, digits, ".", "_" and "-"';
   }
   return null;
+}
+
+/** What the official vet_creators asks CreatorDB for (its tools/vet.js), per platform. */
+function vetFields(platform: Platform): Record<string, unknown> {
+  return {
+    profile: ['bio', 'country', 'mainLanguage'],
+    performance: [],
+    audience: [],
+    'content-detail': platform === 'instagram' ? { recentReels: 3 } : { recentVideos: 3 },
+    ...(platform === 'tiktok' ? {} : { sponsorship: { sponsorList: 5 } }),
+  };
+}
+
+/**
+ * One CreatorDB search for up to 100 creators, with the fields vet_creators asks for. It goes
+ * through the gateway like every other call. Returns the creators found.
+ */
+async function vetBatch(platform: Platform, handles: string[]): Promise<Row[]> {
+  const res = await fetch(new URL(`/${platform}/search`, GATEWAY_ORIGIN), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filters: [{ filterName: 'uniqueId', op: 'in', value: handles }],
+      pageSize: handles.length,
+      offset: 0,
+      fields: vetFields(platform),
+    }),
+  });
+  const body = (await res.json().catch(() => null)) as ApiEnvelope | null;
+  if (!res.ok || !body || body.success === false) {
+    const code = body?.errorCode ? `: ${String(body.errorCode)}` : '';
+    throw new Error(`CreatorDB answered ${res.status} on /${platform}/search${code}`);
+  }
+  const list = (body.data as { creatorList?: unknown } | null | undefined)?.creatorList;
+  return Array.isArray(list) ? (list as Row[]) : [];
 }
 
 /** The creator cards in an official vet_creators reply, or null when the reply isn't one. */

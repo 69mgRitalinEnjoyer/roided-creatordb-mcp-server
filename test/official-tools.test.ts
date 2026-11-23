@@ -93,6 +93,13 @@ describe('an official call', () => {
 });
 
 describe('the 50-row line', () => {
+  it('always sends a transcript in full, however many lines it has', async () => {
+    const out = await a.call('get_youtube_subtitles_download', { videoId: 'abc123', vssId: 'a.en' });
+    expect(out.isError).toBe(false);
+    expect(JSON.parse(out.parts[0]!)).toHaveLength(200);
+    expect(out.parts[1]).toContain('200 entries');
+  });
+
   it('sends a reply of up to 50 rows in full and files it under the day', async () => {
     const out = await a.call('search_instagram', { filters: [{ filterName: 'totalFollowers', op: '>', value: 0 }], pageSize: 20 });
     const data = JSON.parse(out.parts[0]!) as { creatorList: unknown[]; totalResults: number };

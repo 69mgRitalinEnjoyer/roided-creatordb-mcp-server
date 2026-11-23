@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
@@ -109,6 +112,27 @@ export async function callOfficial(tool: OfficialTool, args: Record<string, unkn
     return { isError: true, content: [{ type: 'text', text: `Invalid input for ${tool.name}: ${issue?.path.join('.')} ${issue?.message}` }] };
   }
   return tool.handler(parsed.data as Record<string, unknown>);
+}
+
+export type VetCard = (platform: string, creator: Record<string, unknown>) => Record<string, unknown>;
+let vetCardModule: Promise<VetCard> | null = null;
+
+/**
+ * The official vet_creators card builder. Long lists use it too, so every card is built the same
+ * way whatever the list's length. The package doesn't list the file among its exports, so it is
+ * loaded by its path; a test fails if an upgrade moves it.
+ */
+export function officialVetCard(): Promise<VetCard> {
+  if (!vetCardModule) {
+    vetCardModule = (async () => {
+      await loadOfficial();
+      const entry = createRequire(import.meta.url).resolve('@creatordbai/mcp-server/register-tools');
+      const mod = (await import(pathToFileURL(join(dirname(entry), 'tools', 'vet.js')).href)) as { vetCard?: VetCard };
+      if (typeof mod.vetCard !== 'function') throw new Error('The official package no longer has vetCard in tools/vet.js.');
+      return mod.vetCard;
+    })();
+  }
+  return vetCardModule;
 }
 
 export async function officialInstructions(): Promise<string> {

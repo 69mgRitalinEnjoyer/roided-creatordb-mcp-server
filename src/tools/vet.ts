@@ -30,8 +30,8 @@ type Auth = { workspaceId: string; apiKey: string };
  *
  * Up to 50 creators go through the official tool exactly as on the official server, so the
  * reply is the same. A longer list, or every creator in a saved dataset, runs as a background
- * pull: 150 creators per step, about 50 per CreatorDB request. It starts at once and comes back
- * as a summary with a live table and a CSV file.
+ * pull: 300 creators per step, 100 per CreatorDB request (the official tool sends 50). It starts
+ * at once and comes back as a summary with a live table and a CSV file.
  */
 export function registerVetTool(server: McpServer, deps: ToolDeps, auth: Auth, official: OfficialTool): void {
   const { cfg, runner } = deps;
