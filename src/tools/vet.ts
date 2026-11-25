@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { callContext, type CallContext } from '../context.js';
 import { callOfficial, type OfficialTool, type ToolResult } from '../official/loader.js';
 import { readVetCards, startVet } from '../pulls/pulls.js';
-import { TABLE_URI } from '../ui/table.js';
+import { TABLE_URI, VIEW_META_KEY } from '../ui/table.js';
 import { appendRows, createDataset, getDataset, ToolError } from '../workspace/datasets.js';
 import { defaultColumns } from '../workspace/query.js';
 import { datasetRef, pullReport, safe, tableInfo, type ToolDeps } from './register.js';
@@ -95,8 +95,9 @@ async function vetInReply(deps: ToolDeps, auth: Auth, official: OfficialTool, cr
       const dataset = await getDataset(q, auth.workspaceId, created.id);
       return tableInfo(dataset, await defaultColumns(q, auth.workspaceId, dataset.id));
     });
-    // The text the model reads is the official reply, unchanged. The table reads its rows from the workspace.
-    return { ...result, structuredContent: { table } };
+    // The text the model reads is the official reply, unchanged. The table's pointer goes in _meta,
+    // which the model doesn't read, and the table loads its rows from the workspace.
+    return { ...result, _meta: { ...(result._meta ?? {}), [VIEW_META_KEY]: { table } } };
   } catch (err) {
     console.error('[vet] could not save the cards:', err instanceof Error ? err.message : err);
     return result;

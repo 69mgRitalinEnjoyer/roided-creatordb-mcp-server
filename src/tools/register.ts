@@ -21,7 +21,7 @@ import {
 import { writeDatasetFile } from '../workspace/files.js';
 import { addFormulaColumn, aggregate, defaultColumns, queryRows } from '../workspace/query.js';
 import { buildSummary, compactCsv, fmt, wrapUntrusted } from '../workspace/summary.js';
-import { TABLE_URI, tableHtml } from '../ui/table.js';
+import { TABLE_URI, tableHtml, VIEW_META_KEY } from '../ui/table.js';
 
 export interface ToolDeps {
   db: Db;
@@ -31,8 +31,19 @@ export interface ToolDeps {
 
 type Handler<T> = (args: T) => Promise<ToolResult>;
 
-function text(body: string, structuredContent?: Record<string, unknown>): ToolResult {
-  return structuredContent ? { content: [{ type: 'text', text: body }], structuredContent } : { content: [{ type: 'text', text: body }] };
+/**
+ * A reply: text for the model and, when there is a live table to show, the table's data. That
+ * data goes in `_meta`, which the table reads and the model doesn't. Some apps, Claude Code among
+ * them, show the model `structuredContent` in place of the text, so the model would lose the reply.
+ */
+function text(body: string, view?: Record<string, unknown>): ToolResult {
+  const content = [{ type: 'text' as const, text: body }];
+  return view ? { content, _meta: { [VIEW_META_KEY]: view } } : { content };
+}
+
+/** Rows for the live table. Only the table calls table_rows, so its data can go in `structuredContent`. */
+function rowsReply(body: string, data: Record<string, unknown>): ToolResult {
+  return { content: [{ type: 'text', text: body }], structuredContent: data };
 }
 
 /** Turns a failure into a reply the model can act on. Unexpected errors are logged, not shown. */
@@ -410,7 +421,7 @@ export function registerWorkspaceTools(server: McpServer, deps: ToolDeps, worksp
           : await defaultColumns(q, workspaceId, ds.id, 14);
         return queryRows(q, workspaceId, ds, { where, sort, columns, limit, offset });
       });
-      return text(`rows ${offset + 1} to ${offset + out.rows.length} of ${out.matched}`, { columns: out.columns, rows: out.rows, matched: out.matched });
+      return rowsReply(`rows ${offset + 1} to ${offset + out.rows.length} of ${out.matched}`, { columns: out.columns, rows: out.rows, matched: out.matched });
     }),
   );
 

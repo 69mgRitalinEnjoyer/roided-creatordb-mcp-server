@@ -8,8 +8,11 @@ export const TABLE_URI = 'ui://creatordb-workspace/table';
  * `table_rows` tool, which only the page itself can call, and draws them. While a whole-list pull
  * is still running it shows progress and checks again every few seconds.
  */
+/** Where a tool result carries the live table's data. The table reads it; the model doesn't. */
+export const VIEW_META_KEY = 'roided-mcp/view';
+
 export function tableHtml(scriptUrl: string): string {
-  return PAGE.replace('__SCRIPT_URL__', scriptUrl);
+  return PAGE.replace('__SCRIPT_URL__', scriptUrl).replace('__VIEW_KEY__', VIEW_META_KEY);
 }
 
 const PAGE = String.raw`<!DOCTYPE html>
@@ -42,6 +45,7 @@ const PAGE = String.raw`<!DOCTYPE html>
 import { App } from "__SCRIPT_URL__";
 
 const PAGE_SIZE = 100;
+const VIEW_KEY = "__VIEW_KEY__";
 const BT = String.fromCharCode(96);
 const root = document.getElementById("root");
 const app = new App({ name: "CreatorDB table", version: "0.1.0" });
@@ -129,11 +133,12 @@ async function download() {
 function renderPull() {
   const p = state.pull;
   const total = p.total || 0;
-  const line = total ? nf.format(p.done) + " of " + nf.format(total) + " creators" : "starting";
+  const line = total ? nf.format(p.done || 0) + " of " + nf.format(total) + " creators" : p.status === "running" ? "in progress" : "";
   const words = { running: "Pulling", paused: "Paused: the account is out of credits", cancelled: "Cancelled", partial: "Finished with some failures", done: "Finished" };
+  const credits = typeof p.credits === "number" ? nf.format(p.credits) + " credits" : "";
   return el("div", { class: "msg" },
-    el("div", {}, (words[p.status] || p.status) + " · " + line + " · " + nf.format(p.credits) + " credits"),
-    p.status === "running" ? el("div", {}, el("progress", total ? { max: total, value: p.done } : {})) : null);
+    el("div", {}, [words[p.status] || p.status, line, credits].filter(Boolean).join(" · ")),
+    p.status === "running" ? el("div", {}, el("progress", total ? { max: total, value: p.done || 0 } : {})) : null);
 }
 
 function renderTable() {
@@ -182,18 +187,33 @@ function render() {
   }
 }
 
+// The table's data in a tool result. It comes in _meta. If an app drops _meta, the pull and
+// dataset numbers are read from the reply's text instead.
+function viewData(result) {
+  const meta = result && result._meta && result._meta[VIEW_KEY];
+  if (meta) return meta;
+  const text = textOf(result);
+  if (!text || (result && result.isError)) return null;
+  const out = {};
+  const pull = /pull\s+(\d+)/.exec(text);
+  if (pull) out.pull = { id: Number(pull[1]), status: /still running/.test(text) ? "running" : /is paused/.test(text) ? "paused" : /cancelled/.test(text) ? "cancelled" : "done" };
+  const dataset = /dataset (\d+)/.exec(text);
+  if (dataset) out.table = { dataset: Number(dataset[1]), name: "Dataset " + dataset[1] };
+  return out.pull || out.table ? out : null;
+}
+
 function onResult(result) {
-  const sc = result && result.structuredContent;
-  if (!sc) {
+  const data = viewData(result);
+  if (!data) {
     // A reply with no table, such as an error. Show its first line, and only when no table is open.
     if (!state.table) { state.error = (textOf(result) || "This reply has no table.").split("\n")[0].slice(0, 300); render(); }
     return;
   }
-  if (sc.pull) state.pull = sc.pull;
-  if (sc.table) {
-    const first = !state.table || state.table.dataset !== sc.table.dataset;
-    state.table = sc.table;
-    if (first) { state.where = sc.table.where || ""; state.typed = state.where; state.sort = sc.table.sort || []; state.offset = 0; }
+  if (data.pull) state.pull = data.pull;
+  if (data.table) {
+    const first = !state.table || state.table.dataset !== data.table.dataset;
+    state.table = data.table;
+    if (first) { state.where = data.table.where || ""; state.typed = state.where; state.sort = data.table.sort || []; state.offset = 0; }
     load();
   } else {
     render();

@@ -15,8 +15,14 @@ import { FakeCreatorDb } from './fake-creatordb.js';
 export interface Session {
   client: Client;
   workspaceId: string;
-  /** Calls a tool and returns its text, joined, plus the raw result. */
-  call(name: string, args?: Record<string, unknown>): Promise<{ text: string; isError: boolean; structured?: Record<string, unknown>; parts: string[] }>;
+  /**
+   * Calls a tool. `structured` is the reply's structuredContent, which some apps show the model in
+   * place of the text; `view` is the live table's data, which travels in _meta.
+   */
+  call(
+    name: string,
+    args?: Record<string, unknown>,
+  ): Promise<{ text: string; isError: boolean; structured?: Record<string, unknown>; view?: Record<string, unknown>; parts: string[] }>;
 }
 
 export interface TestEnv {
@@ -62,7 +68,14 @@ export async function makeEnv(overrides: Partial<Config> = {}): Promise<TestEnv>
         async call(name, args = {}) {
           const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 120_000 });
           const parts = (result.content as Array<{ type: string; text?: string }>).filter((c) => c.type === 'text').map((c) => c.text ?? '');
-          return { text: parts.join('\n'), parts, isError: result.isError === true, structured: result.structuredContent as Record<string, unknown> | undefined };
+          const meta = result._meta as Record<string, unknown> | undefined;
+          return {
+            text: parts.join('\n'),
+            parts,
+            isError: result.isError === true,
+            structured: result.structuredContent as Record<string, unknown> | undefined,
+            view: meta?.['roided-mcp/view'] as Record<string, unknown> | undefined,
+          };
         },
       };
     },

@@ -59,6 +59,7 @@ describe('the tool list', () => {
     expect(page.mimeType).toBe('text/html;profile=mcp-app');
     expect(page.text).toContain('http://localhost:8787/assets/ext-apps.js');
     expect(page.text).toContain('table_rows');
+    expect(page.text).toContain('const VIEW_KEY = "roided-mcp/view"');
   });
 });
 

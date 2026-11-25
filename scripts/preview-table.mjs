@@ -24,9 +24,11 @@ export class App {
   async connect() {
     setTimeout(() => this.ontoolresult && this.ontoolresult({
       content: [{ type: 'text', text: 'pull 7, finished' }],
-      structuredContent: {
-        pull: { id: 7, status: 'done', done: 1234, total: 1234, failed: 0, credits: 864.5 },
-        table: { dataset: 214, name: 'search_youtube: skincare, USA', rows: 1234, columns: COLUMNS.slice(1) },
+      _meta: {
+        'roided-mcp/view': {
+          pull: { id: 7, status: 'done', done: 1234, total: 1234, failed: 0, credits: 864.5 },
+          table: { dataset: 214, name: 'search_youtube: skincare, USA', rows: 1234, columns: COLUMNS.slice(1) },
+        },
       },
     }), 30);
   }

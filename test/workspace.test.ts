@@ -105,7 +105,8 @@ describe('files and the live table', () => {
     const out = await a.call('show_table', { dataset, where: 'tier = "macro"' });
     expect(out.text).toContain('Its rows were not sent here');
     expect(out.text).not.toContain('creator_0');
-    expect(out.structured).toMatchObject({ table: { dataset, rows: 250, where: 'tier = "macro"' } });
+    expect(out.structured).toBeUndefined();
+    expect(out.view).toMatchObject({ table: { dataset, rows: 250, where: 'tier = "macro"' } });
   });
 
   it('gives the table its rows a page at a time', async () => {

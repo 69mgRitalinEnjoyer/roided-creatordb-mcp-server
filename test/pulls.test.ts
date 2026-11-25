@@ -33,8 +33,10 @@ describe('a whole-list pull over an imported list', () => {
     expect(env.fake.count('/instagram/profile') - profileCalls).toBe(250);
     expect(env.fake.count('/instagram/contact')).toBe(250);
     // The live table gets a pointer to the dataset, not the rows.
-    expect(out.structured).toMatchObject({ pull: { status: 'done', done: 250, total: 250 }, table: { dataset, rows: 250 } });
-    expect(JSON.stringify(out.structured)).not.toContain('example.com');
+    // The model reads the text: nothing goes in structuredContent, which some apps show in its place.
+    expect(out.structured).toBeUndefined();
+    expect(out.view).toMatchObject({ pull: { status: 'done', done: 250, total: 250 }, table: { dataset, rows: 250 } });
+    expect(JSON.stringify(out.view)).not.toContain('example.com');
 
     const withEmail = await a.call('query_dataset', { dataset, where: 'emails is not null', limit: 0 });
     expect(withEmail.text).toContain('125 of 250 rows match');
@@ -119,7 +121,7 @@ describe('a pull that outlasts its call', () => {
       const dataset = datasetIdIn(imported.text);
       const out = await s.call('pull_list', { dataset, calls: [{ tool: 'get_instagram_profile' }] });
       expect(out.text).toContain('is still running');
-      expect(out.structured).toMatchObject({ pull: { status: 'running', total: 600 } });
+      expect(out.view).toMatchObject({ pull: { status: 'running', total: 600 } });
       const pullId = Number(/pull (\d+)/.exec(out.text)![1]);
 
       const cancelled = await s.call('cancel_pull', { pull: pullId });

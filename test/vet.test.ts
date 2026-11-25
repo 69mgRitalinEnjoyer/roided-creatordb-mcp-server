@@ -51,7 +51,8 @@ describe('vet_creators', () => {
     expect(body.creators.find((c) => c.handle === handleOf(2))).toMatchObject({ followers: 2000, engagementRate: '2%', medianViews: 600 });
     expect(out.parts[1]).toMatch(/^Credits used: 39 \| Remaining: \d+$/);
     // The person also gets the cards as a table. The model's text is untouched.
-    expect(out.structured).toMatchObject({ table: { rows: 3 } });
+    expect(out.structured).toBeUndefined();
+    expect(out.view).toMatchObject({ table: { rows: 3 } });
   });
 
   it('checks 400 creators in one request, 100 per CreatorDB request, with no approval step', async () => {
@@ -62,7 +63,8 @@ describe('vet_creators', () => {
     expect(out.text).toMatch(/results\s+380 vetted, 20 not found in CreatorDB/);
     expect(out.text).toContain('4,940 credits');
     expect(env.fake.count('/instagram/search') - searches).toBe(4);
-    expect(out.structured).toMatchObject({ pull: { status: 'done', total: 400 }, table: { rows: 400 } });
+    expect(out.structured).toBeUndefined();
+    expect(out.view).toMatchObject({ pull: { status: 'done', total: 400 }, table: { rows: 400 } });
 
     const dataset = datasetIdIn(out.text);
     const first = await a.call('query_dataset', { dataset, where: 'row = 1', columns: ['uniqueId', 'vet_status'] });
